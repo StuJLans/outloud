@@ -13,7 +13,7 @@ export interface TTSOptions {
 
 export interface TTSConfig {
   enabled: boolean;
-  provider: "macos" | "elevenlabs" | "hume";
+  provider: "macos" | "elevenlabs" | "hume" | "cartesia";
   voice?: string;
   rate?: number;
   maxLength?: number; // Max characters to speak (for very long responses)
@@ -22,6 +22,7 @@ export interface TTSConfig {
     macos?: string;
     elevenlabs?: string;
     hume?: string;
+    cartesia?: string;
   };
 }
 

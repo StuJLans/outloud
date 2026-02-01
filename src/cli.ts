@@ -16,7 +16,7 @@
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { loadConfig, loadGlobalConfig, saveConfig, getConfigPath, loadProjectConfig, saveProjectConfig, getProjectConfigPath } from "./config";
-import { createProvider, ELEVENLABS_VOICES, HUME_VOICES } from "./providers";
+import { createProvider, ELEVENLABS_VOICES, HUME_VOICES, CARTESIA_VOICES } from "./providers";
 import { listMacOSVoices } from "./providers/macos";
 import { processTextForSpeech } from "./text";
 import { setKeychainPassword, deleteKeychainPassword, getKeychainPassword } from "./keychain";
@@ -180,6 +180,7 @@ async function status(): Promise<void> {
     if (globalConfig.voices.macos) console.log(`  macOS:      ${globalConfig.voices.macos}`);
     if (globalConfig.voices.elevenlabs) console.log(`  ElevenLabs: ${globalConfig.voices.elevenlabs}`);
     if (globalConfig.voices.hume) console.log(`  Hume:       ${globalConfig.voices.hume}`);
+    if (globalConfig.voices.cartesia) console.log(`  Cartesia:   ${globalConfig.voices.cartesia}`);
   }
 
   // Show project config if present
@@ -223,11 +224,11 @@ async function setConfig(key: string, value: string): Promise<void> {
       config.excludeCodeBlocks = value === "true";
       break;
     case "provider":
-      if (!["macos", "elevenlabs", "hume"].includes(value)) {
-        console.error('Invalid provider. Use "macos", "elevenlabs", or "hume".');
+      if (!["macos", "elevenlabs", "hume", "cartesia"].includes(value)) {
+        console.error('Invalid provider. Use "macos", "elevenlabs", "hume", or "cartesia".');
         process.exit(1);
       }
-      const newProvider = value as "macos" | "elevenlabs" | "hume";
+      const newProvider = value as "macos" | "elevenlabs" | "hume" | "cartesia";
       config.provider = newProvider;
       // Restore saved voice for this provider (if any)
       if (config.voices?.[newProvider]) {
@@ -265,6 +266,14 @@ async function voices(): Promise<void> {
     console.log('\nSet voice with: outloud config voice <name>');
     console.log("Example: outloud config voice ava");
     console.log("You can also use custom voice IDs from your Hume account.");
+  } else if (config.provider === "cartesia") {
+    console.log("Cartesia voices:\n");
+    for (const [name, id] of Object.entries(CARTESIA_VOICES)) {
+      console.log(`  ${name.padEnd(10)} (${id})`);
+    }
+    console.log('\nSet voice with: outloud config voice <name or id>');
+    console.log("Example: outloud config voice caroline");
+    console.log("You can also use custom voice IDs from your Cartesia account.");
   } else {
     console.log("Available macOS voices:\n");
     const voiceList = await listMacOSVoices();
@@ -330,11 +339,11 @@ async function init(options?: { enabled?: boolean; provider?: string; voice?: st
   }
 
   if (options?.provider) {
-    if (!["macos", "elevenlabs", "hume"].includes(options.provider)) {
-      console.error('Invalid provider. Use "macos", "elevenlabs", or "hume".');
+    if (!["macos", "elevenlabs", "hume", "cartesia"].includes(options.provider)) {
+      console.error('Invalid provider. Use "macos", "elevenlabs", "hume", or "cartesia".');
       process.exit(1);
     }
-    projectConfig.provider = options.provider as "macos" | "elevenlabs" | "hume";
+    projectConfig.provider = options.provider as "macos" | "elevenlabs" | "hume" | "cartesia";
   }
 
   if (options?.voice) {
@@ -373,8 +382,8 @@ async function auth(action: string, arg2?: string, arg3?: string): Promise<void>
     provider = arg2;
   }
 
-  const keychainKey = provider === "hume" ? "hume-api-key" : "elevenlabs-api-key";
-  const providerName = provider === "hume" ? "Hume" : "Eleven Labs";
+  const keychainKey = provider === "hume" ? "hume-api-key" : provider === "cartesia" ? "cartesia-api-key" : "elevenlabs-api-key";
+  const providerName = provider === "hume" ? "Hume" : provider === "cartesia" ? "Cartesia" : "Eleven Labs";
 
   switch (action) {
     case "set":
@@ -400,8 +409,10 @@ async function auth(action: string, arg2?: string, arg3?: string): Promise<void>
         // Remove all
         const r1 = await deleteKeychainPassword("elevenlabs-api-key");
         const r2 = await deleteKeychainPassword("hume-api-key");
+        const r3 = await deleteKeychainPassword("cartesia-api-key");
         console.log(r1 ? "Eleven Labs API key removed." : "No Eleven Labs key found.");
         console.log(r2 ? "Hume API key removed." : "No Hume key found.");
+        console.log(r3 ? "Cartesia API key removed." : "No Cartesia key found.");
       } else {
         const removed = await deleteKeychainPassword(keychainKey);
         if (removed) {
@@ -415,10 +426,12 @@ async function auth(action: string, arg2?: string, arg3?: string): Promise<void>
     case "status":
       const elevenKey = await getKeychainPassword("elevenlabs-api-key");
       const humeKey = await getKeychainPassword("hume-api-key");
+      const cartesiaKey = await getKeychainPassword("cartesia-api-key");
 
       console.log("API Key Status:\n");
       console.log(`  Eleven Labs: ${elevenKey ? "✓ stored in Keychain" : "✗ not set"}`);
       console.log(`  Hume:        ${humeKey ? "✓ stored in Keychain" : "✗ not set"}`);
+      console.log(`  Cartesia:    ${cartesiaKey ? "✓ stored in Keychain" : "✗ not set"}`);
       break;
 
     default:
@@ -430,12 +443,13 @@ Actions:
   remove [provider]     Remove API key(s) from Keychain
   status                Check which API keys are stored
 
-Providers: elevenlabs, hume
+Providers: elevenlabs, hume, cartesia
 
 Examples:
   outloud auth set sk_xxxxx           # Set key for current provider
   outloud auth set elevenlabs sk_xxx  # Set Eleven Labs key
   outloud auth set hume xxx           # Set Hume key
+  outloud auth set cartesia xxx       # Set Cartesia key
   outloud auth status                 # Show all stored keys
 `);
   }
@@ -471,11 +485,11 @@ Commands:
   help                Show this help message
 
 Configuration keys:
-  voice               Voice name or ID (e.g., "Samantha", "rachel", "ava")
+  voice               Voice name or ID (e.g., "Samantha", "rachel", "ava", "caroline")
   rate                Speech rate in words per minute (default: 200)
   maxLength           Max characters to speak (default: 5000)
   excludeCodeBlocks   Skip code blocks (true/false, default: true)
-  provider            TTS provider (macos, elevenlabs, hume)
+  provider            TTS provider (macos, elevenlabs, hume, cartesia)
 
 Examples:
   outloud install
