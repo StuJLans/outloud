@@ -170,6 +170,15 @@ async function status(): Promise<void> {
   console.log(`Rate: ${config.rate || "(default)"}`);
   console.log(`Max length: ${config.maxLength || "unlimited"}`);
   console.log(`Exclude code blocks: ${config.excludeCodeBlocks ? "Yes" : "No"}`);
+
+  // Show saved voices per provider
+  if (config.voices && Object.keys(config.voices).length > 0) {
+    console.log("\nSaved voices:");
+    if (config.voices.macos) console.log(`  macOS:      ${config.voices.macos}`);
+    if (config.voices.elevenlabs) console.log(`  ElevenLabs: ${config.voices.elevenlabs}`);
+    if (config.voices.hume) console.log(`  Hume:       ${config.voices.hume}`);
+  }
+
   console.log(`\nConfig file: ${getConfigPath()}`);
   console.log(`Claude settings: ${CLAUDE_SETTINGS_PATH}`);
 }
@@ -185,6 +194,9 @@ async function setConfig(key: string, value: string): Promise<void> {
   switch (key) {
     case "voice":
       config.voice = value;
+      // Also save to per-provider voices
+      if (!config.voices) config.voices = {};
+      config.voices[config.provider] = value;
       break;
     case "rate":
       config.rate = parseInt(value, 10);
@@ -200,7 +212,16 @@ async function setConfig(key: string, value: string): Promise<void> {
         console.error('Invalid provider. Use "macos", "elevenlabs", or "hume".');
         process.exit(1);
       }
-      config.provider = value as "macos" | "elevenlabs" | "hume";
+      const newProvider = value as "macos" | "elevenlabs" | "hume";
+      config.provider = newProvider;
+      // Restore saved voice for this provider (if any)
+      if (config.voices?.[newProvider]) {
+        config.voice = config.voices[newProvider];
+        console.log(`Restored voice: ${config.voice}`);
+      } else {
+        // Clear voice so provider uses its default
+        config.voice = undefined;
+      }
       break;
     default:
       console.error(`Unknown config key: ${key}`);

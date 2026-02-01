@@ -18,6 +18,11 @@ export interface TTSConfig {
   rate?: number;
   maxLength?: number; // Max characters to speak (for very long responses)
   excludeCodeBlocks?: boolean; // Skip code blocks in speech
+  voices?: {
+    macos?: string;
+    elevenlabs?: string;
+    hume?: string;
+  };
 }
 
 export const defaultConfig: TTSConfig = {
