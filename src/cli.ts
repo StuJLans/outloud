@@ -1,0 +1,449 @@
+#!/usr/bin/env bun
+/**
+ * outloud CLI
+ *
+ * Commands:
+ *   install   - Install the Claude Code hook
+ *   uninstall - Remove the Claude Code hook
+ *   enable    - Enable TTS
+ *   disable   - Disable TTS
+ *   status    - Show current status
+ *   config    - Show/edit configuration
+ *   voices    - List available voices
+ *   test      - Test TTS with a sample message
+ */
+
+import { homedir } from "os";
+import { join, dirname } from "path";
+import { loadConfig, saveConfig, getConfigPath } from "./config";
+import { createProvider, ELEVENLABS_VOICES, HUME_VOICES } from "./providers";
+import { listMacOSVoices } from "./providers/macos";
+import { processTextForSpeech } from "./text";
+import { setKeychainPassword, deleteKeychainPassword, getKeychainPassword } from "./keychain";
+
+const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
+const HOOK_SCRIPT_PATH = join(dirname(import.meta.dir), "src", "hook.ts");
+
+interface ClaudeSettings {
+  hooks?: {
+    Stop?: Array<{
+      hooks: Array<{
+        type: string;
+        command: string;
+        timeout?: number;
+      }>;
+    }>;
+    [key: string]: any;
+  };
+  [key: string]: any;
+}
+
+async function loadClaudeSettings(): Promise<ClaudeSettings> {
+  try {
+    const file = Bun.file(CLAUDE_SETTINGS_PATH);
+    if (await file.exists()) {
+      return await file.json();
+    }
+  } catch {
+    // File doesn't exist or is invalid
+  }
+  return {};
+}
+
+async function saveClaudeSettings(settings: ClaudeSettings): Promise<void> {
+  // Ensure .claude directory exists
+  await Bun.$`mkdir -p ${join(homedir(), ".claude")}`.quiet();
+  await Bun.write(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2));
+}
+
+function getHookCommand(): string {
+  return `bun run "${HOOK_SCRIPT_PATH}"`;
+}
+
+function isHookInstalled(settings: ClaudeSettings): boolean {
+  const stopHooks = settings.hooks?.Stop;
+  if (!stopHooks) return false;
+
+  return stopHooks.some((entry) =>
+    entry.hooks.some(
+      (hook) => hook.type === "command" && hook.command.includes("outloud")
+    )
+  );
+}
+
+async function install(): Promise<void> {
+  console.log("Installing Claude Code TTS hook...\n");
+
+  const settings = await loadClaudeSettings();
+
+  if (isHookInstalled(settings)) {
+    console.log("Hook is already installed.");
+    return;
+  }
+
+  // Initialize hooks structure if needed
+  if (!settings.hooks) {
+    settings.hooks = {};
+  }
+  if (!settings.hooks.Stop) {
+    settings.hooks.Stop = [];
+  }
+
+  // Add our hook
+  settings.hooks.Stop.push({
+    hooks: [
+      {
+        type: "command",
+        command: getHookCommand(),
+        timeout: 60,
+      },
+    ],
+  });
+
+  await saveClaudeSettings(settings);
+
+  console.log("Hook installed successfully!");
+  console.log(`\nSettings file: ${CLAUDE_SETTINGS_PATH}`);
+  console.log(`Hook script: ${HOOK_SCRIPT_PATH}`);
+  console.log("\nNote: Restart Claude Code for the hook to take effect.");
+}
+
+async function uninstall(): Promise<void> {
+  console.log("Uninstalling Claude Code TTS hook...\n");
+
+  const settings = await loadClaudeSettings();
+
+  if (!isHookInstalled(settings)) {
+    console.log("Hook is not installed.");
+    return;
+  }
+
+  // Remove our hook entries
+  if (settings.hooks?.Stop) {
+    settings.hooks.Stop = settings.hooks.Stop.filter(
+      (entry) =>
+        !entry.hooks.some(
+          (hook) =>
+            hook.type === "command" && hook.command.includes("outloud")
+        )
+    );
+
+    // Clean up empty arrays
+    if (settings.hooks.Stop.length === 0) {
+      delete settings.hooks.Stop;
+    }
+    if (Object.keys(settings.hooks).length === 0) {
+      delete settings.hooks;
+    }
+  }
+
+  await saveClaudeSettings(settings);
+
+  console.log("Hook uninstalled successfully!");
+  console.log("\nNote: Restart Claude Code for the change to take effect.");
+}
+
+async function enable(): Promise<void> {
+  const config = await loadConfig();
+  config.enabled = true;
+  await saveConfig(config);
+  console.log("TTS enabled.");
+}
+
+async function disable(): Promise<void> {
+  const config = await loadConfig();
+  config.enabled = false;
+  await saveConfig(config);
+  console.log("TTS disabled.");
+}
+
+async function status(): Promise<void> {
+  const config = await loadConfig();
+  const settings = await loadClaudeSettings();
+  const hookInstalled = isHookInstalled(settings);
+
+  console.log("OutLoud Status\n");
+  console.log(`Hook installed: ${hookInstalled ? "Yes" : "No"}`);
+  console.log(`TTS enabled: ${config.enabled ? "Yes" : "No"}`);
+  console.log(`Provider: ${config.provider}`);
+  console.log(`Voice: ${config.voice || "(default)"}`);
+  console.log(`Rate: ${config.rate || "(default)"}`);
+  console.log(`Max length: ${config.maxLength || "unlimited"}`);
+  console.log(`Exclude code blocks: ${config.excludeCodeBlocks ? "Yes" : "No"}`);
+  console.log(`\nConfig file: ${getConfigPath()}`);
+  console.log(`Claude settings: ${CLAUDE_SETTINGS_PATH}`);
+}
+
+async function showConfig(): Promise<void> {
+  const config = await loadConfig();
+  console.log(JSON.stringify(config, null, 2));
+}
+
+async function setConfig(key: string, value: string): Promise<void> {
+  const config = await loadConfig();
+
+  switch (key) {
+    case "voice":
+      config.voice = value;
+      break;
+    case "rate":
+      config.rate = parseInt(value, 10);
+      break;
+    case "maxLength":
+      config.maxLength = parseInt(value, 10);
+      break;
+    case "excludeCodeBlocks":
+      config.excludeCodeBlocks = value === "true";
+      break;
+    case "provider":
+      if (!["macos", "elevenlabs", "hume"].includes(value)) {
+        console.error('Invalid provider. Use "macos", "elevenlabs", or "hume".');
+        process.exit(1);
+      }
+      config.provider = value as "macos" | "elevenlabs" | "hume";
+      break;
+    default:
+      console.error(`Unknown config key: ${key}`);
+      process.exit(1);
+  }
+
+  await saveConfig(config);
+  console.log(`Set ${key} = ${value}`);
+}
+
+async function voices(): Promise<void> {
+  const config = await loadConfig();
+
+  if (config.provider === "elevenlabs") {
+    console.log("Eleven Labs voices:\n");
+    for (const [name, id] of Object.entries(ELEVENLABS_VOICES)) {
+      console.log(`  ${name.padEnd(10)} (${id})`);
+    }
+    console.log('\nSet voice with: outloud config voice <name or id>');
+    console.log("Example: outloud config voice rachel");
+  } else if (config.provider === "hume") {
+    console.log("Hume AI voices:\n");
+    for (const [shortName, fullName] of Object.entries(HUME_VOICES)) {
+      console.log(`  ${shortName.padEnd(10)} → ${fullName}`);
+    }
+    console.log('\nSet voice with: outloud config voice <name>');
+    console.log("Example: outloud config voice ava");
+    console.log("You can also use custom voice IDs from your Hume account.");
+  } else {
+    console.log("Available macOS voices:\n");
+    const voiceList = await listMacOSVoices();
+    for (const voice of voiceList) {
+      console.log(`  ${voice}`);
+    }
+    console.log(`\nTotal: ${voiceList.length} voices`);
+    console.log('\nSet voice with: outloud config voice <name>');
+  }
+}
+
+async function test(message?: string): Promise<void> {
+  const config = await loadConfig();
+  const testMessage =
+    message ||
+    "Hello! This is a test of Claude TTS. If you can hear this, the text to speech integration is working correctly.";
+
+  console.log(`Testing TTS with provider: ${config.provider}`);
+  console.log(`Voice: ${config.voice || "(default)"}`);
+  console.log(`Rate: ${config.rate || "(default)"}\n`);
+
+  const provider = createProvider(config);
+
+  const available = await provider.isAvailable();
+  if (!available) {
+    console.error(`Provider '${config.provider}' is not available.`);
+    process.exit(1);
+  }
+
+  console.log("Speaking...\n");
+  await provider.speak(testMessage, {
+    voice: config.voice,
+    rate: config.rate,
+  });
+  console.log("Done!");
+}
+
+async function stop(): Promise<void> {
+  const config = await loadConfig();
+  const provider = createProvider(config);
+  await provider.stop();
+  console.log("Stopped TTS playback.");
+}
+
+async function auth(action: string, arg2?: string, arg3?: string): Promise<void> {
+  // Support both: auth set <key> (uses current provider) and auth set elevenlabs <key>
+  let provider: string | undefined;
+  let apiKey: string | undefined;
+
+  if (arg3) {
+    // auth set elevenlabs <key>
+    provider = arg2;
+    apiKey = arg3;
+  } else if (arg2 && action === "set") {
+    // auth set <key> - use current provider
+    const config = await loadConfig();
+    provider = config.provider;
+    apiKey = arg2;
+  } else {
+    provider = arg2;
+  }
+
+  const keychainKey = provider === "hume" ? "hume-api-key" : "elevenlabs-api-key";
+  const providerName = provider === "hume" ? "Hume" : "Eleven Labs";
+
+  switch (action) {
+    case "set":
+      if (!apiKey) {
+        console.error("Usage: outloud auth set [provider] <api-key>");
+        console.error("Examples:");
+        console.error("  outloud auth set <key>              # Uses current provider");
+        console.error("  outloud auth set elevenlabs <key>");
+        console.error("  outloud auth set hume <key>");
+        process.exit(1);
+      }
+      const success = await setKeychainPassword(keychainKey, apiKey);
+      if (success) {
+        console.log(`${providerName} API key stored securely in macOS Keychain.`);
+      } else {
+        console.error("Failed to store API key.");
+        process.exit(1);
+      }
+      break;
+
+    case "remove":
+      if (!provider) {
+        // Remove all
+        const r1 = await deleteKeychainPassword("elevenlabs-api-key");
+        const r2 = await deleteKeychainPassword("hume-api-key");
+        console.log(r1 ? "Eleven Labs API key removed." : "No Eleven Labs key found.");
+        console.log(r2 ? "Hume API key removed." : "No Hume key found.");
+      } else {
+        const removed = await deleteKeychainPassword(keychainKey);
+        if (removed) {
+          console.log(`${providerName} API key removed from Keychain.`);
+        } else {
+          console.log(`No ${providerName} API key found in Keychain.`);
+        }
+      }
+      break;
+
+    case "status":
+      const elevenKey = await getKeychainPassword("elevenlabs-api-key");
+      const humeKey = await getKeychainPassword("hume-api-key");
+
+      console.log("API Key Status:\n");
+      console.log(`  Eleven Labs: ${elevenKey ? "✓ stored in Keychain" : "✗ not set"}`);
+      console.log(`  Hume:        ${humeKey ? "✓ stored in Keychain" : "✗ not set"}`);
+      break;
+
+    default:
+      console.log(`
+Usage: outloud auth <action> [provider] [api-key]
+
+Actions:
+  set [provider] <key>  Store API key in macOS Keychain
+  remove [provider]     Remove API key(s) from Keychain
+  status                Check which API keys are stored
+
+Providers: elevenlabs, hume
+
+Examples:
+  outloud auth set sk_xxxxx           # Set key for current provider
+  outloud auth set elevenlabs sk_xxx  # Set Eleven Labs key
+  outloud auth set hume xxx           # Set Hume key
+  outloud auth status                 # Show all stored keys
+`);
+  }
+}
+
+function printHelp(): void {
+  console.log(`
+outloud - Text-to-speech for Claude Code
+
+Usage: outloud <command> [options]
+
+Commands:
+  install             Install the Claude Code hook
+  uninstall           Remove the Claude Code hook
+  enable              Enable TTS (hook remains installed)
+  disable             Disable TTS (hook remains installed)
+  status              Show current status
+  config              Show current configuration
+  config <key> <val>  Set configuration value
+  auth set [provider] <key>  Store API key in macOS Keychain
+  auth remove [provider]     Remove API key(s) from Keychain
+  auth status                Check which API keys are stored
+  voices              List available voices for current provider
+  test [message]      Test TTS with optional custom message
+  stop                Stop current TTS playback
+  help                Show this help message
+
+Configuration keys:
+  voice               Voice name or ID (e.g., "Samantha", "rachel", "ava")
+  rate                Speech rate in words per minute (default: 200)
+  maxLength           Max characters to speak (default: 5000)
+  excludeCodeBlocks   Skip code blocks (true/false, default: true)
+  provider            TTS provider (macos, elevenlabs, hume)
+
+Examples:
+  outloud install
+  outloud auth set elevenlabs sk_xxxxx
+  outloud auth set hume xxxx
+  outloud config provider hume
+  outloud config voice ava
+  outloud test "Hello world"
+`);
+}
+
+// Main CLI handler
+const command = process.argv[2];
+
+switch (command) {
+  case "install":
+    await install();
+    break;
+  case "uninstall":
+    await uninstall();
+    break;
+  case "enable":
+    await enable();
+    break;
+  case "disable":
+    await disable();
+    break;
+  case "status":
+    await status();
+    break;
+  case "config":
+    if (process.argv[3] && process.argv[4]) {
+      await setConfig(process.argv[3], process.argv[4]);
+    } else {
+      await showConfig();
+    }
+    break;
+  case "voices":
+    await voices();
+    break;
+  case "test":
+    await test(process.argv.slice(3).join(" ") || undefined);
+    break;
+  case "stop":
+    await stop();
+    break;
+  case "auth":
+    await auth(process.argv[3], process.argv[4], process.argv[5]);
+    break;
+  case "help":
+  case "--help":
+  case "-h":
+  case undefined:
+    printHelp();
+    break;
+  default:
+    console.error(`Unknown command: ${command}`);
+    printHelp();
+    process.exit(1);
+}

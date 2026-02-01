@@ -1,0 +1,37 @@
+{
+  "name": "outloud",
+  "version": "0.1.0",
+  "description": "Text-to-speech for AI coding assistants - hear responses spoken aloud",
+  "module": "src/index.ts",
+  "type": "module",
+  "bin": {
+    "outloud": "./src/cli.ts"
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --outdir dist --target bun",
+    "test": "bun test",
+    "hook": "bun run src/hook.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "keywords": [
+    "tts",
+    "text-to-speech",
+    "accessibility",
+    "voice",
+    "speech",
+    "ai"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/outloud"
+  },
+  "dependencies": {
+    "hume": "^0.15.11"
+  }
+}
