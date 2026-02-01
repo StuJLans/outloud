@@ -29,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/outloud"
+    "url": "https://github.com/StuJLans/outloud"
   },
   "dependencies": {
     "hume": "^0.15.11"

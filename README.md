@@ -22,7 +22,7 @@ Zero extra tokens - reads directly from the conversation transcript.
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/outloud.git
+git clone https://github.com/StuJLans/outloud.git
 cd outloud
 
 # Install dependencies
