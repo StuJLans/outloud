@@ -86,14 +86,16 @@ const debugLog = async (msg: string) => {
 async function backgroundSpeaker() {
   const transcriptPath = process.env.OUTLOUD_TRANSCRIPT_PATH!;
   const sessionId = process.env.OUTLOUD_SESSION_ID!;
+  const cwd = process.env.OUTLOUD_CWD || undefined;
 
-  await debugLog(`Background started: transcript=${transcriptPath}, session=${sessionId}`);
+  await debugLog(`Background started: transcript=${transcriptPath}, session=${sessionId}, cwd=${cwd}`);
 
   // Wait a moment for the full message to be written (including tool_use blocks)
   // This prevents speaking text that's followed by tool calls
   await Bun.sleep(800);
 
-  const config = await loadConfig();
+  // Load config with project-level overrides if available
+  const config = await loadConfig(cwd);
   const stateFile = join(getConfigDir(), `state-${sessionId}.json`);
 
   // Read transcript and get last text block
@@ -195,18 +197,20 @@ async function main() {
     }
 
     // Main hook: read input, spawn background, exit immediately
-    const config = await loadConfig();
-    if (!config.enabled) {
-      process.exit(0);
-    }
-
     const input = await Bun.stdin.text();
     if (!input.trim()) {
       process.exit(0);
     }
 
     const hookInput: HookInput = JSON.parse(input);
-    await debugLog(`Hook fired: transcript=${hookInput.transcript_path}`);
+
+    // Load config with project-level overrides
+    const config = await loadConfig(hookInput.cwd);
+    if (!config.enabled) {
+      process.exit(0);
+    }
+
+    await debugLog(`Hook fired: transcript=${hookInput.transcript_path}, cwd=${hookInput.cwd}`);
 
     // Spawn background process
     const scriptPath = import.meta.path;
@@ -217,6 +221,7 @@ async function main() {
         OUTLOUD_BACKGROUND: "1",
         OUTLOUD_TRANSCRIPT_PATH: hookInput.transcript_path,
         OUTLOUD_SESSION_ID: hookInput.session_id,
+        OUTLOUD_CWD: hookInput.cwd,
       },
     });
 

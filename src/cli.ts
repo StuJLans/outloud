@@ -15,7 +15,7 @@
 
 import { homedir } from "os";
 import { join, dirname } from "path";
-import { loadConfig, saveConfig, getConfigPath } from "./config";
+import { loadConfig, loadGlobalConfig, saveConfig, getConfigPath, loadProjectConfig, saveProjectConfig, getProjectConfigPath } from "./config";
 import { createProvider, ELEVENLABS_VOICES, HUME_VOICES } from "./providers";
 import { listMacOSVoices } from "./providers/macos";
 import { processTextForSpeech } from "./text";
@@ -144,52 +144,67 @@ async function uninstall(): Promise<void> {
 }
 
 async function enable(): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadGlobalConfig();
   config.enabled = true;
   await saveConfig(config);
-  console.log("TTS enabled.");
+  console.log("TTS enabled (globally).");
 }
 
 async function disable(): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadGlobalConfig();
   config.enabled = false;
   await saveConfig(config);
-  console.log("TTS disabled.");
+  console.log("TTS disabled (globally).");
 }
 
 async function status(): Promise<void> {
-  const config = await loadConfig();
+  const globalConfig = await loadGlobalConfig();
+  const cwd = process.cwd();
+  const projectConfig = await loadProjectConfig(cwd);
+  const effectiveConfig = await loadConfig(cwd);
   const settings = await loadClaudeSettings();
   const hookInstalled = isHookInstalled(settings);
 
   console.log("OutLoud Status\n");
   console.log(`Hook installed: ${hookInstalled ? "Yes" : "No"}`);
-  console.log(`TTS enabled: ${config.enabled ? "Yes" : "No"}`);
-  console.log(`Provider: ${config.provider}`);
-  console.log(`Voice: ${config.voice || "(default)"}`);
-  console.log(`Rate: ${config.rate || "(default)"}`);
-  console.log(`Max length: ${config.maxLength || "unlimited"}`);
-  console.log(`Exclude code blocks: ${config.excludeCodeBlocks ? "Yes" : "No"}`);
+  console.log(`TTS enabled: ${effectiveConfig.enabled ? "Yes" : "No"}`);
+  console.log(`Provider: ${effectiveConfig.provider}`);
+  console.log(`Voice: ${effectiveConfig.voice || "(default)"}`);
+  console.log(`Rate: ${effectiveConfig.rate || "(default)"}`);
+  console.log(`Max length: ${effectiveConfig.maxLength || "unlimited"}`);
+  console.log(`Exclude code blocks: ${effectiveConfig.excludeCodeBlocks ? "Yes" : "No"}`);
 
   // Show saved voices per provider
-  if (config.voices && Object.keys(config.voices).length > 0) {
+  if (globalConfig.voices && Object.keys(globalConfig.voices).length > 0) {
     console.log("\nSaved voices:");
-    if (config.voices.macos) console.log(`  macOS:      ${config.voices.macos}`);
-    if (config.voices.elevenlabs) console.log(`  ElevenLabs: ${config.voices.elevenlabs}`);
-    if (config.voices.hume) console.log(`  Hume:       ${config.voices.hume}`);
+    if (globalConfig.voices.macos) console.log(`  macOS:      ${globalConfig.voices.macos}`);
+    if (globalConfig.voices.elevenlabs) console.log(`  ElevenLabs: ${globalConfig.voices.elevenlabs}`);
+    if (globalConfig.voices.hume) console.log(`  Hume:       ${globalConfig.voices.hume}`);
   }
 
-  console.log(`\nConfig file: ${getConfigPath()}`);
+  // Show project config if present
+  if (projectConfig) {
+    console.log("\nProject config (.outloud.json):");
+    if (projectConfig.enabled !== undefined) console.log(`  enabled: ${projectConfig.enabled}`);
+    if (projectConfig.provider) console.log(`  provider: ${projectConfig.provider}`);
+    if (projectConfig.voice) console.log(`  voice: ${projectConfig.voice}`);
+    if (projectConfig.rate) console.log(`  rate: ${projectConfig.rate}`);
+  }
+
+  console.log(`\nGlobal config: ${getConfigPath()}`);
+  if (projectConfig) {
+    console.log(`Project config: ${getProjectConfigPath(cwd)}`);
+  }
   console.log(`Claude settings: ${CLAUDE_SETTINGS_PATH}`);
 }
 
 async function showConfig(): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadGlobalConfig();
   console.log(JSON.stringify(config, null, 2));
 }
 
 async function setConfig(key: string, value: string): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadGlobalConfig();
 
   switch (key) {
     case "voice":
@@ -233,7 +248,7 @@ async function setConfig(key: string, value: string): Promise<void> {
 }
 
 async function voices(): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadConfig(process.cwd());
 
   if (config.provider === "elevenlabs") {
     console.log("Eleven Labs voices:\n");
@@ -262,7 +277,7 @@ async function voices(): Promise<void> {
 }
 
 async function test(message?: string): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadConfig(process.cwd());
   const testMessage =
     message ||
     "Hello! This is a test of Claude TTS. If you can hear this, the text to speech integration is working correctly.";
@@ -288,10 +303,56 @@ async function test(message?: string): Promise<void> {
 }
 
 async function stop(): Promise<void> {
-  const config = await loadConfig();
+  const config = await loadGlobalConfig();
   const provider = createProvider(config);
   await provider.stop();
   console.log("Stopped TTS playback.");
+}
+
+async function init(options?: { enabled?: boolean; provider?: string; voice?: string }): Promise<void> {
+  const cwd = process.cwd();
+  const existingConfig = await loadProjectConfig(cwd);
+
+  if (existingConfig && !options) {
+    console.log("Project config already exists:");
+    console.log(JSON.stringify(existingConfig, null, 2));
+    console.log(`\nFile: ${getProjectConfigPath(cwd)}`);
+    console.log("\nTo modify, use: outloud init --enabled=true/false --provider=<provider> --voice=<voice>");
+    return;
+  }
+
+  const projectConfig: Partial<typeof existingConfig> = existingConfig || {};
+
+  if (options?.enabled !== undefined) {
+    projectConfig.enabled = options.enabled;
+  } else if (!existingConfig) {
+    projectConfig.enabled = true;
+  }
+
+  if (options?.provider) {
+    if (!["macos", "elevenlabs", "hume"].includes(options.provider)) {
+      console.error('Invalid provider. Use "macos", "elevenlabs", or "hume".');
+      process.exit(1);
+    }
+    projectConfig.provider = options.provider as "macos" | "elevenlabs" | "hume";
+  }
+
+  if (options?.voice) {
+    projectConfig.voice = options.voice;
+  }
+
+  await saveProjectConfig(cwd, projectConfig);
+  console.log("Project config saved:");
+  console.log(JSON.stringify(projectConfig, null, 2));
+  console.log(`\nFile: ${getProjectConfigPath(cwd)}`);
+}
+
+async function projectDisable(): Promise<void> {
+  await init({ enabled: false });
+}
+
+async function projectEnable(): Promise<void> {
+  await init({ enabled: true });
 }
 
 async function auth(action: string, arg2?: string, arg3?: string): Promise<void> {
@@ -389,11 +450,18 @@ Usage: outloud <command> [options]
 Commands:
   install             Install the Claude Code hook
   uninstall           Remove the Claude Code hook
-  enable              Enable TTS (hook remains installed)
-  disable             Disable TTS (hook remains installed)
+  enable              Enable TTS globally
+  disable             Disable TTS globally
   status              Show current status
   config              Show current configuration
   config <key> <val>  Set configuration value
+
+  Project-level config (per working directory):
+  init                Create .outloud.json in current directory
+  init --enabled=false    Disable TTS for this project
+  init --provider=hume    Set provider for this project
+  init --voice=<id>       Set voice for this project
+
   auth set [provider] <key>  Store API key in macOS Keychain
   auth remove [provider]     Remove API key(s) from Keychain
   auth status                Check which API keys are stored
@@ -412,10 +480,17 @@ Configuration keys:
 Examples:
   outloud install
   outloud auth set elevenlabs sk_xxxxx
-  outloud auth set hume xxxx
   outloud config provider hume
   outloud config voice ava
   outloud test "Hello world"
+
+  # Disable TTS for a specific project:
+  cd ~/projects/quiet-project
+  outloud init --enabled=false
+
+  # Use a different voice for a project:
+  cd ~/projects/fun-project
+  outloud init --provider=hume --voice=ava
 `);
 }
 
@@ -457,6 +532,22 @@ switch (command) {
   case "auth":
     await auth(process.argv[3], process.argv[4], process.argv[5]);
     break;
+  case "init": {
+    // Parse --enabled, --provider, --voice flags
+    const args = process.argv.slice(3);
+    const options: { enabled?: boolean; provider?: string; voice?: string } = {};
+    for (const arg of args) {
+      if (arg.startsWith("--enabled=")) {
+        options.enabled = arg.split("=")[1] === "true";
+      } else if (arg.startsWith("--provider=")) {
+        options.provider = arg.split("=")[1];
+      } else if (arg.startsWith("--voice=")) {
+        options.voice = arg.split("=")[1];
+      }
+    }
+    await init(Object.keys(options).length > 0 ? options : undefined);
+    break;
+  }
   case "help":
   case "--help":
   case "-h":
