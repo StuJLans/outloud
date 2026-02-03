@@ -16,7 +16,7 @@
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { loadConfig, loadGlobalConfig, saveConfig, getConfigPath, loadProjectConfig, saveProjectConfig, getProjectConfigPath } from "./config";
-import { createProvider, ELEVENLABS_VOICES, HUME_VOICES, CARTESIA_VOICES } from "./providers";
+import { createProvider, ELEVENLABS_VOICES, HUME_VOICES, CARTESIA_VOICES, isChatterboxInstalled, isChatterboxServerRunning, stopChatterboxServer } from "./providers";
 import { listMacOSVoices } from "./providers/macos";
 import { processTextForSpeech } from "./text";
 import { setKeychainPassword, deleteKeychainPassword, getKeychainPassword } from "./keychain";
@@ -181,6 +181,17 @@ async function status(): Promise<void> {
     if (globalConfig.voices.elevenlabs) console.log(`  ElevenLabs: ${globalConfig.voices.elevenlabs}`);
     if (globalConfig.voices.hume) console.log(`  Hume:       ${globalConfig.voices.hume}`);
     if (globalConfig.voices.cartesia) console.log(`  Cartesia:   ${globalConfig.voices.cartesia}`);
+    if (globalConfig.voices.chatterbox) console.log(`  Chatterbox: ${globalConfig.voices.chatterbox}`);
+  }
+
+  // Chatterbox status
+  if (effectiveConfig.provider === "chatterbox") {
+    const installed = await isChatterboxInstalled();
+    const serverRunning = installed ? await isChatterboxServerRunning() : false;
+    console.log(`\nChatterbox: ${installed ? "installed" : "not installed"}`);
+    if (installed) {
+      console.log(`Server: ${serverRunning ? "running" : "stopped"}`);
+    }
   }
 
   // Show project config if present
@@ -224,11 +235,11 @@ async function setConfig(key: string, value: string): Promise<void> {
       config.excludeCodeBlocks = value === "true";
       break;
     case "provider":
-      if (!["macos", "elevenlabs", "hume", "cartesia"].includes(value)) {
-        console.error('Invalid provider. Use "macos", "elevenlabs", "hume", or "cartesia".');
+      if (!["macos", "elevenlabs", "hume", "cartesia", "chatterbox"].includes(value)) {
+        console.error('Invalid provider. Use "macos", "elevenlabs", "hume", "cartesia", or "chatterbox".');
         process.exit(1);
       }
-      const newProvider = value as "macos" | "elevenlabs" | "hume" | "cartesia";
+      const newProvider = value as "macos" | "elevenlabs" | "hume" | "cartesia" | "chatterbox";
       config.provider = newProvider;
       // Restore saved voice for this provider (if any)
       if (config.voices?.[newProvider]) {
@@ -274,6 +285,9 @@ async function voices(): Promise<void> {
     console.log('\nSet voice with: outloud config voice <name or id>');
     console.log("Example: outloud config voice caroline");
     console.log("You can also use custom voice IDs from your Cartesia account.");
+  } else if (config.provider === "chatterbox") {
+    console.log("Chatterbox uses a single high-quality voice.");
+    console.log("Voice cloning is not yet supported in this integration.");
   } else {
     console.log("Available macOS voices:\n");
     const voiceList = await listMacOSVoices();
@@ -339,11 +353,11 @@ async function init(options?: { enabled?: boolean; provider?: string; voice?: st
   }
 
   if (options?.provider) {
-    if (!["macos", "elevenlabs", "hume", "cartesia"].includes(options.provider)) {
-      console.error('Invalid provider. Use "macos", "elevenlabs", "hume", or "cartesia".');
+    if (!["macos", "elevenlabs", "hume", "cartesia", "chatterbox"].includes(options.provider)) {
+      console.error('Invalid provider. Use "macos", "elevenlabs", "hume", "cartesia", or "chatterbox".');
       process.exit(1);
     }
-    projectConfig.provider = options.provider as "macos" | "elevenlabs" | "hume" | "cartesia";
+    projectConfig.provider = options.provider as "macos" | "elevenlabs" | "hume" | "cartesia" | "chatterbox";
   }
 
   if (options?.voice) {
@@ -362,6 +376,83 @@ async function projectDisable(): Promise<void> {
 
 async function projectEnable(): Promise<void> {
   await init({ enabled: true });
+}
+
+async function chatterbox(action?: string): Promise<void> {
+  const scriptDir = dirname(import.meta.dir);
+  const installScript = join(scriptDir, "scripts", "install_chatterbox.sh");
+
+  switch (action) {
+    case "install":
+      console.log("Installing Chatterbox TTS...\n");
+      const proc = Bun.spawn(["bash", installScript], {
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      await proc.exited;
+      break;
+
+    case "start":
+      const installed = await isChatterboxInstalled();
+      if (!installed) {
+        console.error("Chatterbox is not installed. Run: outloud chatterbox install");
+        process.exit(1);
+      }
+      const running = await isChatterboxServerRunning();
+      if (running) {
+        console.log("Chatterbox server is already running.");
+      } else {
+        console.log("Starting Chatterbox server...");
+        // The provider will start it automatically on first use
+        const config = await loadConfig(process.cwd());
+        config.provider = "chatterbox";
+        const provider = createProvider(config);
+        await provider.isAvailable();
+        console.log("Chatterbox server started.");
+      }
+      break;
+
+    case "stop":
+      const stopped = await stopChatterboxServer();
+      if (stopped) {
+        console.log("Chatterbox server stopped.");
+      } else {
+        console.log("Chatterbox server is not running.");
+      }
+      break;
+
+    case "status":
+      const isInstalled = await isChatterboxInstalled();
+      const isRunning = isInstalled ? await isChatterboxServerRunning() : false;
+      console.log(`Chatterbox installed: ${isInstalled ? "Yes" : "No"}`);
+      if (isInstalled) {
+        console.log(`Server running: ${isRunning ? "Yes" : "No"}`);
+      }
+      if (!isInstalled) {
+        console.log("\nTo install: outloud chatterbox install");
+      }
+      break;
+
+    default:
+      console.log(`
+Chatterbox - Local TTS powered by Resemble AI
+
+Usage: outloud chatterbox <command>
+
+Commands:
+  install   Install Chatterbox (requires Python 3.11)
+  start     Start the Chatterbox server
+  stop      Stop the Chatterbox server
+  status    Check installation and server status
+
+The server starts automatically on first TTS request and stays running
+for fast subsequent requests.
+
+Requirements:
+  - macOS 14+ on Apple Silicon
+  - Python 3.11 (brew install python@3.11)
+`);
+  }
 }
 
 async function auth(action: string, arg2?: string, arg3?: string): Promise<void> {
@@ -470,6 +561,12 @@ Commands:
   config              Show current configuration
   config <key> <val>  Set configuration value
 
+  Chatterbox (local TTS, default provider):
+  chatterbox install  Install Chatterbox (requires Python 3.11)
+  chatterbox start    Start the Chatterbox server
+  chatterbox stop     Stop the Chatterbox server
+  chatterbox status   Check Chatterbox installation status
+
   Project-level config (per working directory):
   init                Create .outloud.json in current directory
   init --enabled=false    Disable TTS for this project
@@ -489,22 +586,22 @@ Configuration keys:
   rate                Speech rate in words per minute (default: 200)
   maxLength           Max characters to speak (default: 5000)
   excludeCodeBlocks   Skip code blocks (true/false, default: true)
-  provider            TTS provider (macos, elevenlabs, hume, cartesia)
+  provider            TTS provider (chatterbox, macos, elevenlabs, hume, cartesia)
 
 Examples:
+  # Quick start with Chatterbox (free, local, high-quality):
+  outloud chatterbox install
   outloud install
-  outloud auth set elevenlabs sk_xxxxx
-  outloud config provider hume
-  outloud config voice ava
   outloud test "Hello world"
+
+  # Or use cloud providers:
+  outloud auth set elevenlabs sk_xxxxx
+  outloud config provider elevenlabs
+  outloud config voice rachel
 
   # Disable TTS for a specific project:
   cd ~/projects/quiet-project
   outloud init --enabled=false
-
-  # Use a different voice for a project:
-  cd ~/projects/fun-project
-  outloud init --provider=hume --voice=ava
 `);
 }
 
@@ -562,6 +659,9 @@ switch (command) {
     await init(Object.keys(options).length > 0 ? options : undefined);
     break;
   }
+  case "chatterbox":
+    await chatterbox(process.argv[3]);
+    break;
   case "help":
   case "--help":
   case "-h":

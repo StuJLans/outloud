@@ -7,7 +7,8 @@ Zero extra tokens - reads directly from the conversation transcript.
 ## Features
 
 - **Zero token overhead** - Uses hooks to read the transcript directly
-- **Multiple providers** - macOS native, Eleven Labs, and Hume AI (Octave 2)
+- **Multiple providers** - Chatterbox (local), macOS native, Eleven Labs, Hume AI, Cartesia
+- **Chatterbox Turbo** - High-quality local TTS, free and open source
 - **Secure API key storage** - Keys stored in macOS Keychain
 - **Smart text processing** - Strips code blocks and markdown for natural speech
 - **Auto-fallback** - Falls back to macOS if cloud provider fails
@@ -16,7 +17,8 @@ Zero extra tokens - reads directly from the conversation transcript.
 ## Requirements
 
 - [Bun](https://bun.sh) runtime
-- macOS
+- macOS (Apple Silicon recommended for Chatterbox)
+- Python 3.11 (for Chatterbox only)
 
 ## Installation
 
@@ -34,16 +36,44 @@ bun run src/cli.ts install
 
 ## Provider Setup
 
-### macOS (Free, Local)
+### Chatterbox (Free, Local, High Quality) - Default
 
-Works out of the box - no API key needed.
+Chatterbox is a high-quality open-source TTS from Resemble AI that runs locally on Apple Silicon.
+
+```bash
+# Install Python 3.11 if needed
+brew install python@3.11
+
+# Install Chatterbox (one-time setup)
+bun run src/cli.ts chatterbox install
+
+# Login to HuggingFace for Turbo model access
+# Get a token from https://huggingface.co/settings/tokens (read access)
+.venv-chatterbox/bin/huggingface-cli login
+
+# Test it
+bun run src/cli.ts test "Hello from Chatterbox!"
+```
+
+The Chatterbox server starts automatically on first use and stays running for fast subsequent requests.
+
+**Server management:**
+```bash
+bun run src/cli.ts chatterbox status  # Check if running
+bun run src/cli.ts chatterbox stop    # Stop the server
+bun run src/cli.ts chatterbox start   # Start manually
+```
+
+### macOS (Free, Local, Basic)
+
+Works out of the box - no setup needed.
 
 ```bash
 bun run src/cli.ts config provider macos
 bun run src/cli.ts config voice Samantha  # or Karen, Daniel, Moira, etc.
 ```
 
-### Eleven Labs (High Quality)
+### Eleven Labs (High Quality, Cloud)
 
 ```bash
 # Store API key securely in Keychain
@@ -61,6 +91,16 @@ bun run src/cli.ts auth set hume YOUR_API_KEY
 
 bun run src/cli.ts config provider hume
 bun run src/cli.ts config voice ava  # or use a custom voice ID
+```
+
+### Cartesia (High Quality, Cloud)
+
+```bash
+# Store API key securely in Keychain
+bun run src/cli.ts auth set cartesia YOUR_API_KEY
+
+bun run src/cli.ts config provider cartesia
+bun run src/cli.ts config voice caroline  # or use a custom voice ID
 ```
 
 ## Usage
@@ -108,8 +148,8 @@ Config is stored at `~/.config/outloud/config.json`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `true` | Enable/disable TTS |
-| `provider` | `"macos"` | TTS provider (`macos`, `elevenlabs`, `hume`) |
-| `voice` | (system default) | Voice name or ID |
+| `provider` | `"chatterbox"` | TTS provider (`chatterbox`, `macos`, `elevenlabs`, `hume`, `cartesia`) |
+| `voice` | (provider default) | Voice name or ID |
 | `rate` | `200` | Speech rate (words per minute, macOS only) |
 | `maxLength` | `5000` | Max characters to speak |
 | `excludeCodeBlocks` | `true` | Skip code blocks in speech |
@@ -140,13 +180,6 @@ The hook **automatically falls back to macOS** if a cloud provider fails:
 **The voice change is the signal.** If you suddenly hear the robotic macOS voice instead of your cloud voice, you know something went wrong with your cloud provider.
 
 Errors are logged to stderr with `[outloud]` prefix for debugging.
-
-## Roadmap
-
-- [ ] Piper TTS support (local neural TTS for Linux)
-- [ ] OpenAI TTS provider
-- [ ] Keyboard shortcut to stop playback
-- [ ] Queue management for rapid responses
 
 ## License
 

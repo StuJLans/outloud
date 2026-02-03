@@ -212,6 +212,18 @@ async function main() {
 
     await debugLog(`Hook fired: transcript=${hookInput.transcript_path}, cwd=${hookInput.cwd}`);
 
+    // Kill any existing outloud background processes and audio playback
+    // This ensures only the latest message is spoken
+    try {
+      await Bun.$`pkill -f "OUTLOUD_BACKGROUND=1"`.quiet();
+      await Bun.$`pkill -x afplay`.quiet();
+    } catch {
+      // Ignore if no processes to kill
+    }
+
+    // Small delay to let processes die
+    await Bun.sleep(100);
+
     // Spawn background process
     const scriptPath = import.meta.path;
     Bun.spawn(["nohup", "bun", "run", scriptPath], {

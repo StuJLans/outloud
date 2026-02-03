@@ -8,6 +8,11 @@ Text-to-speech for AI coding assistants. Automatically speaks responses aloud us
 # All commands run from the project root
 cd outloud
 
+# Quick start with Chatterbox (default, free, local, high-quality)
+bun run src/cli.ts chatterbox install  # One-time setup (needs Python 3.11)
+bun run src/cli.ts install             # Install the hook
+bun run src/cli.ts test                # Test it!
+
 # Installation
 bun run src/cli.ts install     # Install the hook
 bun run src/cli.ts uninstall   # Remove the hook
@@ -16,14 +21,22 @@ bun run src/cli.ts uninstall   # Remove the hook
 bun run src/cli.ts disable    # Mute TTS
 bun run src/cli.ts enable     # Unmute TTS
 
+# Chatterbox management
+bun run src/cli.ts chatterbox install  # Install Chatterbox (requires Python 3.11)
+bun run src/cli.ts chatterbox status   # Check if installed/running
+bun run src/cli.ts chatterbox stop     # Stop the background server
+
 # Provider setup
+bun run src/cli.ts config provider chatterbox  # Default, free, local, high quality
 bun run src/cli.ts config provider macos       # Free, local, basic quality
 bun run src/cli.ts config provider elevenlabs  # High quality, requires API key
 bun run src/cli.ts config provider hume        # High quality (Octave 2), requires API key
+bun run src/cli.ts config provider cartesia    # High quality, requires API key
 
 # API key management (stored in macOS Keychain)
 bun run src/cli.ts auth set elevenlabs <key>
 bun run src/cli.ts auth set hume <key>
+bun run src/cli.ts auth set cartesia <key>
 bun run src/cli.ts auth status
 bun run src/cli.ts auth remove
 
@@ -51,9 +64,15 @@ src/
 ├── text.ts          # Text processing (strips code blocks, markdown)
 └── providers/
     ├── types.ts     # TTSProvider interface, TTSConfig
+    ├── chatterbox.ts # Chatterbox (local, default)
     ├── macos.ts     # macOS `say` command
     ├── elevenlabs.ts # Eleven Labs API
-    └── hume.ts      # Hume AI API (Octave 2)
+    ├── hume.ts      # Hume AI API (Octave 2)
+    └── cartesia.ts  # Cartesia API
+
+scripts/
+├── install_chatterbox.sh  # Chatterbox setup for Apple Silicon
+└── chatterbox_server.py   # Background HTTP server for Chatterbox
 ```
 
 ## How It Works
@@ -85,8 +104,7 @@ Location: `~/.config/outloud/config.json`
 ```json
 {
   "enabled": true,
-  "provider": "elevenlabs",
-  "voice": "rachel",
+  "provider": "chatterbox",
   "rate": 200,
   "maxLength": 5000,
   "excludeCodeBlocks": true
